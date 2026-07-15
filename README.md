@@ -46,7 +46,10 @@ thousands of false alarms — amended-vs-original versions, rounding rules, snap
 timing — so the engine encodes those innocent explanations up front and filters them
 before you ever see a lead. In that field test, 12,000 raw anomalies collapsed to
 ~3,700 honest candidates, and adversarial verification narrowed those to the handful
-worth a reporter's day.
+worth a reporter's day. In independent runs on the same corpus, the pipeline surfaced
+a previously unreported foreign-influence lead and a recurring pattern of convicted
+individuals paying six-figure lobbying fees on their own legal cases — both handed to
+reporters with every source record attached.
 
 ### Turn badly structured data into something you can actually query
 

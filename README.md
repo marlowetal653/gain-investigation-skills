@@ -59,14 +59,22 @@ across sources. The prep pipeline handles that without you writing a line of cod
 2. **Profile** — the engine measures the data: every field, how often it's filled,
    what type it really is, and — crucially — which fields in one source actually match
    which fields in another (computed exactly, over everything, because sampling lies).
-3. **Map** — the AI reads that profile (never your raw data) and writes the recipe
-   that turns chaos into clean tables: names standardized, dates parsed, composite IDs
-   split, name variants ("ACME LLC" / "Acme, L.L.C.") resolved to one entity with the
-   fuzzy cases held for human review.
+3. **Design** — this is the step that usually needs a data engineer: the AI reads
+   that profile (never your raw data) and **designs a database structure tailored to
+   your specific dataset**, following data-normalization best practices. It decides
+   what the real-world tables are (filings, payments, people, organizations), what
+   one row should mean in each, which fields are the true keys linking them, and
+   what derived fields the analysis will need — then writes that design as a
+   reviewable config file, not buried code. Names standardized, dates parsed,
+   composite IDs split, name variants ("ACME LLC" / "Acme, L.L.C.") resolved to one
+   entity with fuzzy cases held for human review. Every design decision is recorded
+   with the measured evidence that justified it, so a colleague can audit the schema
+   the same way they'd audit a finding.
 
-The result is one SQLite database file where "show me every payment over $100k to
-firms that also appear in the contracts data, by year" is a one-second query — and
-every row still points back to the exact source file and record it came from.
+The result is one SQLite database file — custom-built for YOUR data, not a
+one-size-fits-all template — where "show me every payment over $100k to firms that
+also appear in the contracts data, by year" is a one-second query, and every row
+still points back to the exact source file and record it came from.
 
 ### Search by meaning, not just keywords (and how that actually works)
 

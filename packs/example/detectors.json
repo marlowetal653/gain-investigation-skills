@@ -1,0 +1,78 @@
+{
+  "_comment": "EXAMPLE PACK detectors — one worked example per template the engine ships. Every detector MUST carry innocent_explanations written BEFORE you look at its output; tolerances encode known lawful causes of the pattern.",
+  "detectors": [
+    {
+      "id": "grant_amount_mismatch",
+      "template": "contradiction",
+      "_comment": "same fact reported differently by two sources, beyond a tolerance",
+      "params": {
+        "left": { "table": "norm_grants", "value_col": "amount" },
+        "right": { "table": "norm_grants_audit_copy", "value_col": "amount" },
+        "join_on": [["grant_id", "grant_id"]],
+        "tolerance": 100,
+        "label_cols": ["recipient_name", "program"]
+      },
+      "innocent_explanations": [
+        "The audit copy may round to whole hundreds — differences at/under $100 are excluded by tolerance",
+        "One copy may be a later amendment"
+      ],
+      "legal_flag": false,
+      "severity_hint": 2
+    },
+    {
+      "id": "grant_missing_in_registry",
+      "template": "gap",
+      "_comment": "expected counterpart record missing — often the legal-flag detector",
+      "params": {
+        "left": { "table": "norm_grants" },
+        "right": { "table": "norm_vendor_officers" },
+        "join_on": [["vendor_ref", "vendor_ref"]],
+        "left_where": "AND l.amount >= 50000",
+        "expectation": "a vendor-registry entry (grants above $50k require a registered vendor)",
+        "label_cols": ["recipient_name", "program", "amount"],
+        "score_col": "amount"
+      },
+      "innocent_explanations": [
+        "Registry snapshot may predate the award (censoring at the dump date)",
+        "The vendor may be registered under a parent company's ref code"
+      ],
+      "legal_flag": true,
+      "severity_hint": 3
+    },
+    {
+      "id": "top_recipients_by_amount",
+      "template": "outlier",
+      "_comment": "numeric extremes within a group",
+      "params": {
+        "table": "norm_grants",
+        "value_col": "amount",
+        "group_cols": ["recipient_name"],
+        "method": "top_n",
+        "n": 25
+      },
+      "innocent_explanations": [
+        "Big institutions lawfully receive big grants; volume alone is not a story"
+      ],
+      "legal_flag": false,
+      "severity_hint": 1
+    },
+    {
+      "id": "hidden_beneficiary",
+      "template": "intermediary",
+      "_comment": "entity-name strings that embed a hidden principal",
+      "params": {
+        "table": "norm_grants",
+        "name_col": "recipient_name",
+        "patterns": [
+          "^(?P<intermediary>.+?)\\s+on behalf of\\s+(?P<principal>.+)$",
+          "^(?P<intermediary>.+?)\\s+as fiscal sponsor for\\s+(?P<principal>.+)$"
+        ]
+      },
+      "innocent_explanations": [
+        "Fiscal sponsorship is legal and common for small nonprofits; the story is only in obscured ultimate beneficiaries"
+      ],
+      "legal_flag": false,
+      "severity_hint": 2
+    }
+  ]
+}

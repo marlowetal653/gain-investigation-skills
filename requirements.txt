@@ -1,0 +1,19 @@
+# The core pipeline is stdlib-only by design (Python 3.9+, sqlite3 built in).
+# ingest / profile / normalize / resolve_entities / detect / export_obsidian
+# all run with ZERO third-party packages — nothing below is required to
+# reproduce the submission's findings.
+
+# --- Optional extras (uncomment if wanted) ---
+
+# Excel export of leads/entities for spreadsheet-oriented reviewers:
+# openpyxl>=3.1
+
+# Graph analytics (paths, hub-normalized centrality) over the edges table:
+# networkx>=3.0
+
+# Semantic layer (OPTIONAL): meaning-level retrieval + the anchored say-vs-do
+# bridge. embed_index.py / semantic_query.py / semantic_bridge.py need these;
+# every other script runs without them. Vectors are stored as plain numpy
+# float16 on disk (no vector DB / extension required).
+# sentence-transformers>=2.5   # pulls torch; ~90MB model downloaded on first use
+# numpy>=1.24                  # also used by the semantic scripts

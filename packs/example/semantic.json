@@ -1,0 +1,50 @@
+{
+  "_comment": "EXAMPLE PACK semantic-layer config (OPTIONAL — requires sentence-transformers; ask the journalist before building, it downloads a ~90MB model and takes minutes to an hour depending on corpus size). Spaces = embedding indexes over text columns; bridge = the anchored meaning-level coupling detector.",
+  "model": "all-MiniLM-L6-v2",
+  "model_revision": null,
+  "_model_revision_note": "pin to a HuggingFace commit hash for reproducible rebuilds",
+  "out_dir": "semantic_index",
+  "chunk_words": 170,
+  "chunk_overlap": 40,
+  "_comment_chunking": "170 words keeps whole chunks inside MiniLM's 256-token window",
+  "spaces": [
+    {
+      "name": "grant_narratives",
+      "table": "norm_grants",
+      "text_col": "description",
+      "id_cols": ["native_id", "source_group"],
+      "carry_cols": ["recipient_name", "program", "awarded_date"],
+      "where": "description IS NOT NULL AND LENGTH(description) > 20",
+      "dedupe": true,
+      "chunk": false
+    }
+  ],
+  "bridge": {
+    "_comment": "The anchored coupling detector. Candidate pairs come ONLY from documented relationships (anchor SQLs below); embeddings rank within them. Unanchored corpus-wide topic matching produces topical coincidences, not leads — do not remove the anchor requirement.",
+    "press_space": "grant_narratives",
+    "desc_space": "grant_narratives",
+    "anchors": [
+      {
+        "name": "shared_vendor_ref",
+        "sql": "SELECT DISTINCT g.recipient_name, o.officer_name FROM norm_grants g JOIN norm_vendor_officers o ON o.vendor_ref = g.vendor_ref",
+        "strength": 1.0
+      }
+    ],
+    "specificity_filter": {
+      "_comment": "drop match-everything boilerplate unless it carries a distinctive token",
+      "require_any": ["\\b[A-Z]{2,}[A-Z0-9]*\\b"],
+      "drop_if_only": ["services related to", "general support", "miscellaneous"]
+    },
+    "same_quarter": false,
+    "min_margin_over_centroid": 0.08,
+    "null_percentile": 99.5,
+    "top_n": 40,
+    "per_client_cap": 3,
+    "exclude_clients": [],
+    "innocent_explanations": [
+      "Similar language often means similar lawful work, not similar misconduct",
+      "A documented anchor is a relationship, not evidence of causation",
+      "Semantic similarity is model-derived; the lead's authority is the two verbatim texts, never the score"
+    ]
+  }
+}

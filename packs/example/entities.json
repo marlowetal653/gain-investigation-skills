@@ -1,0 +1,15 @@
+{
+  "_comment": "EXAMPLE PACK entity-resolution config. Declares WHICH columns hold entity names and their types; resolve_entities.py auto-merges only exact normalized matches under strict guards, and parks anything fuzzy in a review table (entity_merge_candidates) — false merges invent connections, so nothing fuzzy merges without review.",
+  "entity_columns": [
+    { "table": "norm_grants", "column": "recipient_name", "type": "org" },
+    { "table": "norm_vendor_officers", "column": "vendor_name", "type": "org" },
+    { "table": "norm_vendor_officers", "column": "officer_name", "type": "person" }
+  ],
+  "min_norm_len": 5,
+  "_comment_min_norm_len": "names whose normalized form is shorter than this stay singletons — short strings collide",
+  "intermediary_patterns": [
+    "\\bon behalf of\\b",
+    "\\bas fiscal sponsor for\\b"
+  ],
+  "_comment_intermediary": "names matching these are composite strings (two entities in one field) — kept whole, flagged for the intermediary detector, never merged"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "investigator-marketplace",
+  "owner": {
+    "name": "marlowetal653"
+  },
+  "plugins": [
+    {
+      "name": "investigator",
+      "source": "./",
+      "description": "Investigative-journalism agent \u2014 strategize, clean, cross-reference, verify, browse, fact-check. Five composable skills + launchable investigator agent + /investigate command."
+    }
+  ]
+}

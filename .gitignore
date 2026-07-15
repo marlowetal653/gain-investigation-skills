@@ -1,0 +1,34 @@
+# corpus + derived database — too large for git, rebuild via bootstrap
+data/
+spine.db
+spine.db-shm
+spine.db-wal
+out/profile_full/
+*-submission/
+*-submission.zip
+__pycache__/
+.DS_Store
+
+# session-specific / publication-sensitive — belong in the private submission zip,
+# not the reusable public package (traces = raw session transcripts; vault +
+# findings name parties in unverified leads, right-of-reply not yet done)
+traces/
+vault/
+findings-report.md
+out/
+
+# semantic layer (optional): on-disk embedding vectors — never committed or shipped
+semantic_index/
+semantic_index_test/
+
+# GAIN-hackathon-specific material — stays local for the submission zip,
+# never ships in the generic public plugin
+packs/gain/
+data_manual.md
+/scripts/
+CLAUDE.md
+TEST_CHECKLIST.md
+RESEARCH_journalism_skills.md
+INVESTIGATION_PLAN.md
+package_submission.sh
+findings-report.md

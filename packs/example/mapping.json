@@ -1,0 +1,55 @@
+{
+  "_comment": "EXAMPLE PACK — a fictional 'city grants' corpus, showing every knob the engine supports. A pack is where ALL corpus-specific knowledge lives; the engine scripts never hardcode field names. Author your own pack by copying this directory and editing against your corpus's PROFILE_REPORT.md (never against raw data).",
+  "_corpus_fiction": "Two record sources: (1) grants/*.jsonl — one JSON object per awarded grant from the city portal; (2) vendors/*.xml — one XML file per registered vendor. The 'vendor_ref' field bridges them.",
+  "tables": {
+    "grants": {
+      "sources": [
+        {
+          "group": ".jsonl::grants/#.jsonl",
+          "_comment_group": "source_group pattern as reported by profile.py — '#' wildcards digits so all shards of the same shape map together",
+          "paths": {
+            "grant_id": "id",
+            "recipient_name": "recipient.legal_name",
+            "vendor_ref": "recipient.vendor_ref",
+            "program": "program.title",
+            "amount": "award.amount_usd",
+            "awarded_date": "award.date",
+            "description": "narrative"
+          },
+          "_comment_paths": "left side = normalized column name you choose; right side = dotted path into the raw record. '^.' climbs to the parent when exploding nested arrays.",
+          "const": {
+            "source": "city_portal"
+          }
+        }
+      ],
+      "types": {
+        "amount": "money",
+        "awarded_date": "date"
+      },
+      "_comment_types": "coercions the engine applies: 'money' strips $/commas to float; 'date' normalizes to ISO."
+    },
+    "vendor_officers": {
+      "sources": [
+        {
+          "group": ".xml::vendors/#.xml",
+          "explode": "VENDOR.officers.officer[]",
+          "_comment_explode": "one output row per element of this array; other paths are relative to the exploded element, '^.' reaches the enclosing record",
+          "paths": {
+            "officer_name": "name",
+            "officer_title": "title",
+            "vendor_name": "^.VENDOR.legal_name",
+            "vendor_ref": "^.VENDOR.ref_code"
+          },
+          "const": {
+            "source": "vendor_registry"
+          }
+        }
+      ]
+    }
+  },
+  "post_sql": [
+    "CREATE INDEX IF NOT EXISTS idx_grants_vendor ON norm_grants(vendor_ref)",
+    "CREATE INDEX IF NOT EXISTS idx_officers_vendor ON norm_vendor_officers(vendor_ref)"
+  ],
+  "_comment_post_sql": "arbitrary SQL run once after normalization — derived columns, indexes, cleanup. Keep it deterministic."
+}

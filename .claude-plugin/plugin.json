@@ -1,0 +1,32 @@
+{
+  "name": "investigator",
+  "version": "1.0.0",
+  "description": "Agentic records-investigation plugin for journalists: strategize the story, turn any document dump into a provenance-carrying searchable database, scan for anomalies, adversarially verify leads, browse them as an Obsidian vault, and fact-check drafts against the records. Install it, then just describe what you want investigated \u2014 or run /investigate.",
+  "author": {
+    "name": "marlowetal653"
+  },
+  "homepage": "https://github.com/marlowetal653/gain-investigation-skills",
+  "repository": "https://github.com/marlowetal653/gain-investigation-skills",
+  "license": "MIT",
+  "keywords": [
+    "investigation",
+    "journalism",
+    "lobbying",
+    "foia",
+    "data",
+    "agent-skill"
+  ],
+  "skills": [
+    "./skills/strategize",
+    "./skills/corpus-cleanup",
+    "./skills/cross-reference",
+    "./skills/investigate",
+    "./skills/fact-check"
+  ],
+  "agents": [
+    "./agents/investigator.md"
+  ],
+  "commands": [
+    "./commands/investigate.md"
+  ]
+}

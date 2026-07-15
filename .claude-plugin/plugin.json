@@ -20,7 +20,7 @@
     "./skills/strategize",
     "./skills/corpus-cleanup",
     "./skills/cross-reference",
-    "./skills/investigate",
+    "./skills/dossier",
     "./skills/fact-check"
   ],
   "agents": [

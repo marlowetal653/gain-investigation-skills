@@ -19,8 +19,14 @@ Mapping config shape:
       ],
       "types": { "<col>": "text|int|money|date|datetime" }   // default text
     }, ...
-  }
+  },
+  "post_sql": [ "UPDATE ...", "ALTER TABLE ...", "CREATE INDEX ..." ]  // optional
 }
+
+post_sql failures are FATAL (exit 1) and print the failing statement + error —
+except two recovered cases: duplicate-column ALTER ADD COLUMN (benign re-run)
+and 'no such column' where the column is an UPDATE SET target (the column is
+auto-created and the UPDATE retried).
 
 Every output row automatically carries provenance: source_group, native_id,
 content_hash (+ elem_index when exploded). Tables are dropped and rebuilt each
@@ -104,6 +110,74 @@ def to_text(v):
 
 COERCE = {"money": to_money, "date": to_date, "datetime": to_datetime,
           "int": to_int, "text": to_text}
+
+
+# ---------- post_sql execution (loud failures; see run_post_sql) ----------
+_UPDATE_STMT = re.compile(r'^\s*UPDATE\s+"?([A-Za-z0-9_]+)"?\s+SET\b',
+                          re.IGNORECASE | re.DOTALL)
+_ALTER_ADD_STMT = re.compile(r'^\s*ALTER\s+TABLE\b.*\bADD\s+COLUMN\b',
+                             re.IGNORECASE | re.DOTALL)
+_NO_SUCH_COLUMN = re.compile(r"no such column:?\s+([A-Za-z0-9_.\"]+)")
+
+
+def _is_set_target(stmt, col):
+    """True if `col` appears as an assignment TARGET in the statement's SET
+    clause (i.e. `SET col = ...` or `, col = ...`), not merely referenced in
+    an expression or WHERE clause. Only assignment targets are safe to
+    auto-create — auto-adding a referenced column would silently NULL it."""
+    m = re.search(r"\bSET\b(.*)", stmt, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return False
+    return re.search(r'(?:^|,)\s*"?%s"?\s*=' % re.escape(col),
+                     m.group(1), re.IGNORECASE) is not None
+
+
+def run_post_sql(con, stmts):
+    """Execute pack-authored post_sql statements. LOUD on failure: a silently
+    skipped UPDATE leaves normalized columns blank and corrupts everything
+    downstream, so any unrecovered failure prints the full statement + error
+    and the caller exits non-zero. Two well-understood cases are recovered:
+      - 'duplicate column name' on ALTER ... ADD COLUMN: benign re-run, skipped.
+      - 'no such column: X' on UPDATE ... SET X=...: the target column is
+        created via ALTER TABLE ADD COLUMN and the UPDATE retried, so a pack
+        that orders an UPDATE before its ALTER still populates the column.
+    Returns the list of failed statements (already reported)."""
+    failed = []
+    for stmt in stmts:
+        for attempt in range(4):  # a few auto-ALTER recoveries per statement
+            try:
+                con.execute(stmt)
+                con.commit()
+                print(f"post_sql ok: {stmt[:70]}...")
+                break
+            except sqlite3.OperationalError as e:
+                msg = str(e)
+                if "duplicate column name" in msg and _ALTER_ADD_STMT.match(stmt):
+                    print(f"post_sql skip (column already exists; re-run): {stmt[:70]}...")
+                    break
+                um = _UPDATE_STMT.match(stmt)
+                cm = _NO_SUCH_COLUMN.search(msg)
+                if um and cm and attempt < 3:
+                    col = cm.group(1).strip('"').split(".")[-1]
+                    if _is_set_target(stmt, col):
+                        tbl = um.group(1)
+                        print(f'post_sql: column "{col}" missing on "{tbl}" but is an '
+                              f'UPDATE SET target — auto-adding it and retrying')
+                        try:
+                            con.execute(f'ALTER TABLE "{tbl}" ADD COLUMN "{col}"')
+                            con.commit()
+                            continue
+                        except sqlite3.OperationalError as e2:
+                            msg = f"{msg}; auto-ALTER also failed: {e2}"
+                print("post_sql FAILED:")
+                print(f"  statement: {stmt}")
+                print(f"  error:     {msg}")
+                failed.append(stmt)
+                break
+    if failed:
+        print(f"{len(failed)} post_sql statement(s) FAILED — normalized tables are "
+              f"incomplete; fix the mapping pack and re-run")
+    return failed
 
 
 # ---------- path resolution on parsed JSON (python-side; flexible for [] ) ----------
@@ -234,16 +308,12 @@ def main():
         print(f"norm_{tname}: {n} rows ({time.time()-t0:.0f}s)")
 
     # pack-authored derived columns / indexes (kept in config so engine stays generic).
-    # Failures are reported but non-fatal: re-runs hit duplicate-column ALTERs, and
-    # a failed index shouldn't lose an hour of normalization work.
+    # Failures are LOUD (see run_post_sql): normalization work is already committed
+    # table-by-table above, so exiting non-zero here loses nothing and forces the
+    # broken statement to be fixed instead of leaving derived columns blank.
     if not args.only:
-        for stmt in mapping.get("post_sql", []):
-            try:
-                con.execute(stmt)
-                con.commit()
-                print(f"post_sql ok: {stmt[:70]}...")
-            except sqlite3.OperationalError as e:
-                print(f"post_sql SKIP ({e}): {stmt[:70]}...")
+        if run_post_sql(con, mapping.get("post_sql", [])):
+            raise SystemExit(1)
     print("done")
 
 

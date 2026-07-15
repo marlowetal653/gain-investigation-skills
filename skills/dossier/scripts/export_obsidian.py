@@ -197,8 +197,26 @@ def source_note_name(source_group, native_id):
     return f"SRC {group_slug(source_group)} {safe_id(native_id)}"
 
 
+CLAIM_FOR_PARENS = re.compile(r"\bfor \(([^)]{4,160})\)")
+CLAIM_PARENS = re.compile(r"\(([^)]{4,160})\)")
+
+
+def lead_label(lead):
+    """Human label for a lead: the entity parenthetical after 'for (' when the
+    claim has one (gap/contradiction claims), else the LAST parenthetical
+    (usually the entity list), else the claim head."""
+    claim = lead["claim"] or ""
+    m = CLAIM_FOR_PARENS.search(claim)
+    if m:
+        return m.group(1)
+    all_parens = CLAIM_PARENS.findall(claim)
+    if all_parens:
+        return all_parens[-1]
+    return (claim or "lead")[:60]
+
+
 def lead_note_name(lead):
-    return f"LEAD-{lead['lead_id']} {slug(lead['claim'][:40], max_len=48)}"
+    return f"LEAD-{lead['lead_id']} {slug(lead_label(lead), max_len=56)}"
 
 
 def render_lead(lead):
@@ -213,13 +231,32 @@ def render_lead(lead):
     ])
     body = [fm, "", "## Claim", "", lead["claim"] or "_(no claim text)_", ""]
 
+    body.append(
+        "_How to read this note: the claim above states only what the records show. "
+        "Status `" + str(lead["status"]) + "` means "
+        + {"new": "nobody has verified this yet",
+           "verified": "it survived verification",
+           "promoted": "it survived adversarial checks and is story-worthy",
+           "published": "it passed the fact-check gate",
+           "killed": "it was checked and rejected"}.get(str(lead["status"]), "see the leads table")
+        + ". The scores are internal ranking numbers — higher means the pattern is "
+        "bigger or rarer; they are not evidence. `legal_flag: 1` means the pattern "
+        "COULD indicate a compliance issue and needs verification — it is not an "
+        "accusation._")
+    body.append("")
+
     body.append("## Evidence")
     body.append("")
     any_ev = False
     for sg, nid, value in evidence_locators(lead["evidence"]):
         any_ev = True
         if sg is None and nid is None:
-            body.append(f"- (locator missing) — value: `{json.dumps(value, ensure_ascii=False, sort_keys=True)}`")
+            if value in (None, "null", ""):
+                body.append("- **No counterpart record found** — the absence itself "
+                            "is the signal this lead reports (see the claim).")
+            else:
+                rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
+                body.append(f"- Detector context: `{rendered}`")
             continue
         link = source_note_name(sg, nid)
         val = ""
@@ -240,12 +277,12 @@ def render_lead(lead):
         body.append("- _(none recorded — consider before promoting)_")
     body.append("")
 
-    body.append("## Verification")
+    body.append("## How to check this yourself")
     body.append("")
-    body.append("- [ ] Re-run the detector query and confirm this lead reproduces")
-    body.append("- [ ] Open every source note above and confirm the cited values match the raw records")
+    body.append("- [ ] Open each source note linked under Evidence — the original record is pasted there. Confirm the names, amounts, and dates match the claim.")
+    body.append("- [ ] Read the innocent explanations above and rule each in or out.")
     body.append("- [ ] Check for prior coverage (is this already reported?)")
-    body.append("- [ ] Review innocent explanations and rule each in or out")
+    body.append("- [ ] _For technical colleagues:_ re-run the detector and confirm the lead reproduces (`detect.py --only " + str(lead["detector_id"]) + "`)")
 
     tier = (lead["defamation_tier"] or "none")
     if str(tier).lower() not in ("none", "null", ""):
@@ -280,13 +317,9 @@ def render_source(con, source_group, native_id):
         ("content_hash", content_hash),
     ])
     locator = f"{source_group}::{native_id}"
-    body = [fm, "", "## Verify against the raw record", "",
-            "```bash",
-            f'python skills/corpus-cleanup/scripts/show_source.py --db spine.db --locator "{locator}"',
-            "```", ""]
-
-    body.append("## Record excerpt")
-    body.append("")
+    body = [fm, "", "## The original record", "",
+            "_This is the record as it arrived, unaltered (the `content_hash` above "
+            "proves it hasn't changed since ingest)._", ""]
     if raw_json is None:
         body.append("_Raw record not found in spine.db raw_records — run show_source against the corpus, or re-ingest._")
     else:
@@ -295,12 +328,18 @@ def render_source(con, source_group, native_id):
         except (ValueError, TypeError):
             pretty = str(raw_json)
         lines = pretty.splitlines()
-        excerpt = lines[:25]
+        LIMIT = 150
         body.append("```json")
-        body.extend(excerpt)
-        if len(lines) > 25:
-            body.append(f"... ({len(lines) - 25} more lines — use show_source for the full record)")
+        body.extend(lines[:LIMIT])
+        if len(lines) > LIMIT:
+            body.append(f"... ({len(lines) - LIMIT} more lines — full record via the command below)")
         body.append("```")
+    body.append("")
+    body.append("## For technical colleagues")
+    body.append("")
+    body.append("```bash")
+    body.append(f'python skills/corpus-cleanup/scripts/show_source.py --db spine.db --locator "{locator}"')
+    body.append("```")
     return "\n".join(body)
 
 
@@ -462,6 +501,63 @@ the underlying records and detectors.
 
 # ---------------------------------------------------------------- main
 
+def write_leads_csv(path, leads):
+    """leads.csv — double-clicks into Excel/Numbers for editors."""
+    import csv
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["lead_id", "status", "what_it_is", "claim", "detector",
+                    "legal_flag", "named_parties_tier", "innocent_explanations",
+                    "evidence_locators"])
+        for lead in leads:
+            locs = "; ".join(f"{sg}::{nid}" for sg, nid, _ in
+                             evidence_locators(lead["evidence"]) if nid)
+            w.writerow([lead["lead_id"], lead["status"], lead_label(lead),
+                        lead["claim"], lead["detector_id"], lead["legal_flag"],
+                        lead["defamation_tier"],
+                        " | ".join(lead["innocent"] or []), locs])
+
+
+def write_leads_html(path, leads, con):
+    """One self-contained page an editor opens with a double-click."""
+    import html as H
+    rows = []
+    for lead in leads:
+        ev_bits = []
+        for sg, nid, _ in evidence_locators(lead["evidence"]):
+            if nid is None:
+                continue
+            excerpt = ""
+            if table_exists(con, "raw_records"):
+                r = con.execute("SELECT raw_json FROM raw_records WHERE native_id=? LIMIT 1",
+                                (nid,)).fetchone()
+                if r:
+                    excerpt = r[0][:600]
+            ev_bits.append(
+                f"<details><summary>Source record <code>{H.escape(str(nid))}</code></summary>"
+                f"<pre>{H.escape(excerpt)}…</pre></details>")
+        innocents = "".join(f"<li>{H.escape(x)}</li>" for x in (lead["innocent"] or []))
+        rows.append(f"""
+<article>
+  <h3>{H.escape(lead_label(lead))} <small>[{H.escape(str(lead['status']))}]</small></h3>
+  <p>{H.escape(lead['claim'] or '')}</p>
+  {'<p><strong>⚑ flagged: possible compliance relevance — needs verification, not an accusation.</strong></p>' if lead['legal_flag'] else ''}
+  <p><em>Innocent explanations to rule out:</em></p><ul>{innocents}</ul>
+  {''.join(ev_bits)}
+</article><hr>""")
+    doc = f"""<!doctype html><meta charset="utf-8">
+<title>Investigation leads</title>
+<style>body{{font:16px/1.5 Georgia,serif;max-width:52rem;margin:2rem auto;padding:0 1rem}}
+h3 small{{color:#777;font-weight:normal}}pre{{white-space:pre-wrap;background:#f6f6f6;padding:.5rem;font-size:12px}}
+details{{margin:.4rem 0}}article{{margin:1.5rem 0}}</style>
+<h1>Investigation leads ({len(leads)})</h1>
+<p>Every claim states only what the records show. Each lead lists the innocent
+explanations that must be ruled out, and the original records are attached under
+each entry. Nothing here is an accusation.</p>
+{''.join(rows)}"""
+    Path(path).write_text(doc, encoding="utf-8")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Export spine.db to an Obsidian vault.")
     ap.add_argument("--db", required=True)
@@ -469,6 +565,10 @@ def main():
     ap.add_argument("--top", type=int, default=50, help="max leads to export (by rank_score)")
     ap.add_argument("--entity", action="append", default=[],
                     help="also export this entity's dossier (repeatable)")
+    ap.add_argument("--csv", action="store_true",
+                    help="also write <vault>/leads.csv (opens in Excel)")
+    ap.add_argument("--html", action="store_true",
+                    help="also write <vault>/index.html (self-contained, double-click to open)")
     args = ap.parse_args()
 
     db_path = Path(args.db)
@@ -543,11 +643,20 @@ def main():
         export_notes = "\n## Export notes\n\n" + "\n".join(f"- {n}" for n in notes) + "\n"
     write_note(vault / "README.md", README_TEMPLATE.format(export_notes=export_notes))
 
+    if args.csv:
+        write_leads_csv(vault / "leads.csv", leads)
+    if args.html:
+        write_leads_html(vault / "index.html", leads, con)
+
     con.close()
     print(f"vault: {vault}")
     print(f"  leads:    {n_leads}")
     print(f"  sources:  {n_sources}")
     print(f"  entities: {n_entities}")
+    if args.csv:
+        print(f"  leads.csv: open in Excel/Numbers")
+    if args.html:
+        print(f"  index.html: double-click to browse")
     for n in notes:
         print(f"  note: {n}")
 

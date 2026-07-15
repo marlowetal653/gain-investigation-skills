@@ -6,6 +6,9 @@ set -u
 ok=1
 
 echo "== Investigation engine bootstrap check =="
+echo "   (This check is for technical users running the pipeline by hand."
+echo "    If you're using the investigator plugin inside Claude Code, the"
+echo "    agent handles all of this — you don't need to run anything here.)"
 
 # Python 3.9+
 if command -v python3 >/dev/null 2>&1; then
@@ -25,10 +28,9 @@ fi
 if command -v sqlite3 >/dev/null 2>&1; then
     echo "  [ok] sqlite3 CLI $(sqlite3 --version | cut -d' ' -f1)"
 else
-    echo "  [!!] sqlite3 CLI not found. The Python pipeline still runs (sqlite3 is"
-    echo "       built into Python), but you'll want the CLI for views/checkpoints:"
+    echo "  [--] sqlite3 CLI not found — OPTIONAL. The pipeline still runs (sqlite3 is"
+    echo "       built into Python); the CLI is only a convenience for ad-hoc queries."
     echo "       macOS: ships with the OS / brew install sqlite    Debian: apt install sqlite3"
-    ok=0
 fi
 
 # stdlib-only confirmation
@@ -65,7 +67,7 @@ cat <<'USAGE'
        python3 skills/cross-reference/scripts/detect.py --db spine.db --config packs/<corpus>/detectors.json
 
   6. Export the journalist vault (open in Obsidian):
-       python3 skills/investigate/scripts/export_obsidian.py --db spine.db --vault out/vault --top 25
+       python3 skills/dossier/scripts/export_obsidian.py --db spine.db --vault out/vault --top 25
 
   Verify any claim back to its verbatim source record:
        python3 skills/corpus-cleanup/scripts/show_source.py --db spine.db --locator "<group>::<native_id>"

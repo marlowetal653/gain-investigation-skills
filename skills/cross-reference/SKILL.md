@@ -55,6 +55,35 @@ amendment refiling becomes a latest-version view), `legal_flag`, and `severity_h
 When authoring a new pack: every detector must ship with its innocent explanations
 written down BEFORE you look at its output.
 
+### Hard-won comparison rules
+
+Each of these cost a bad lead in field testing. Apply them to every pack.
+
+- **ID overlap ≠ identity.** High join containment proves the key matches, not that
+  the join is CORRECT — one ID mapped to different companies on each side and
+  manufactured a fake "$10k vs $130k" contradiction. Every cross-source ID join must
+  also require a second field to agree (the templates support `guard_cols`). Many
+  guard exclusions are not waste — that pile is a data-quality lead in itself.
+- **Compare like versions.** Most raw "contradictions" are amended-vs-original or
+  quarterly-vs-termination — different by design, not in dispute. Pin report type AND
+  amendment status on BOTH sides: latest-version views plus `left_where`/`right_where`.
+- **Blank ≠ conflict.** One side missing is a gap lead; a contradiction requires both
+  sides present and disagreeing. Never let NULLs inflate contradiction counts.
+- **The newsworthiness gate.** Before promoting any lead, ask: *would this surprise
+  anyone?* Expected self-interest — a company lobbying rules that affect it — gets
+  downgraded. Elevate only the hidden, unexpected, or contradictory: an undisclosed
+  intermediary, someone lobbying their own prosecution, a front group whose name
+  conceals its nature, action cutting against the actor's obvious interest. Detectors
+  find patterns; the surprise test decides findings.
+- **Encode domain rules as innocent explanations UP FRONT.** Every reporting regime
+  generates false anomalies by design — filing thresholds, amendment/termination
+  codes, double-filing that doubles dollar totals, disclosure windows. Write them
+  into `innocent_explanations` when authoring the pack; don't rediscover them by
+  tripping over them in detector output (we did).
+- **Recency scoping.** Before any full-corpus run, offer the journalist a time window
+  ("last year or two?"). Scoped runs are faster and surface fresher leads; save the
+  full sweep for later.
+
 ## Semantic layer (OPTIONAL — requires an extra install; everything above runs without it)
 
 Lexical scan (`mention_scan.py`) finds records that share exact words. The semantic

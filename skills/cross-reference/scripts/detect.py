@@ -8,18 +8,45 @@ produced it) and is written to the `leads` table with status='new'.
 
 Detector templates (v1):
   contradiction  — same fact reported by two sources; report where they differ
-                   beyond a tolerance. params: left/right (table, key_cols,
-                   value_col), join spec incl. fallback keys, tolerance.
+                   beyond a tolerance. params: left/right (table, value_col),
+                   join_on, tolerance, label_cols. Optional:
+                     left_where / right_where — ANDed SQL fragments (each must
+                       start with "AND", may reference the l./r. aliases) to
+                       pin e.g. report type or amendment status so both sides
+                       compare the same version of a filing.
+                     guard_cols: [[left_col, right_col], ...] — after the ID
+                       join, ALSO require these columns to agree (TRIM +
+                       case-insensitive) before calling it a contradiction.
+                       Protects against ID collisions where the same ID points
+                       to different real-world entities on each side. Rows
+                       excluded by a guard are counted and printed; rows where
+                       a guard column is NULL on either side pass (absence is
+                       not disagreement).
+                   Both value_cols must be NOT NULL — missing-vs-present is a
+                   gap, not a contradiction; the count of one-side-NULL pairs
+                   is printed for visibility.
   gap            — expected counterpart missing. params: left table + key,
-                   right table + key, expectation description.
+                   right table + key, expectation description, left_where.
+                   Optional guard_cols (same shape/semantics as contradiction):
+                   an ID-joined counterpart only counts as present if the
+                   guard columns also agree; guard-excluded matches are
+                   counted and printed.
   outlier        — numeric field extreme within a group. params: table,
                    value_col, group_cols, method (top_n | sigma), threshold.
+                   Prints input row count and distinct group count so grain
+                   inflation (per-row vs per-filing aggregation) is visible.
   intermediary   — entity-name strings that embed a hidden principal.
                    params: table, name_col, patterns (regex w/ named groups
                    'intermediary' and 'principal').
   overlap        — two edge sets sharing endpoints within a time window
                    (e.g. money-to-X while lobbying-X). params: left/right
                    (table, entity_col, date_col), window_days, min_amount.
+
+Every detector is PRE-FLIGHTED before any runs: all tables/views named in its
+params must exist and all referenced columns must resolve (PRAGMA table_info).
+A detector that fails pre-flight (or errors at runtime) is reported as
+"[SKIPPED] detector <id>: ..." and the rest still run; if any were skipped the
+process exits 2 after a summary so callers know the pack is incomplete.
 
 Config shape (pack):
 {
@@ -37,6 +64,7 @@ import json
 import re
 import sqlite3
 import time
+from collections import defaultdict
 
 LEADS_DDL = """
 CREATE TABLE IF NOT EXISTS leads (
@@ -75,6 +103,86 @@ def emit(con, run_id, det, signal_type, claim, score, evidence, defam="none", le
     )
 
 
+# ---------------- pre-flight ----------------
+_PROV_COLS = ("source_group", "native_id")
+
+
+def _requirements(det):
+    """Map a detector config to {table_or_view: {required columns}}.
+    Raises KeyError/TypeError on malformed params (caller treats as failure)."""
+    p, t = det["params"], det["template"]
+    req = defaultdict(set)
+    if t == "contradiction":
+        L, R = p["left"], p["right"]
+        req[L["table"]].update((L["value_col"],) + _PROV_COLS)
+        req[R["table"]].update((R["value_col"],) + _PROV_COLS)
+        for a, b in p["join_on"]:
+            req[L["table"]].add(a)
+            req[R["table"]].add(b)
+        for a, b in p.get("guard_cols", []):
+            req[L["table"]].add(a)
+            req[R["table"]].add(b)
+        req[L["table"]].update(p.get("label_cols", []))
+    elif t == "gap":
+        L, R = p["left"], p["right"]
+        req[L["table"]].update(_PROV_COLS)
+        req[R["table"]].add("native_id")
+        for a, b in p["join_on"]:
+            req[L["table"]].add(a)
+            req[R["table"]].add(b)
+        for a, b in p.get("guard_cols", []):
+            req[L["table"]].add(a)
+            req[R["table"]].add(b)
+        req[L["table"]].update(p.get("label_cols", []))
+        if p.get("score_col"):
+            req[L["table"]].add(p["score_col"])
+    elif t == "outlier":
+        req[p["table"]].update((p["value_col"],) + _PROV_COLS)
+        req[p["table"]].update(p.get("group_cols", []))
+    elif t == "intermediary":
+        req[p["table"]].update((p["name_col"],) + _PROV_COLS)
+    elif t == "overlap":
+        L, R = p["left"], p["right"]
+        req[L["table"]].update((L["entity_col"], L["date_col"]) + _PROV_COLS)
+        if L.get("amount_col"):
+            req[L["table"]].add(L["amount_col"])
+        req[R["table"]].update((R["entity_col"], R["date_col"]) + _PROV_COLS)
+    return req
+
+
+def preflight(con, det):
+    """Return a list of human-readable problems (empty = detector runnable):
+    every table/view in the params must exist in sqlite_master and every
+    referenced column must resolve via PRAGMA table_info. left_where /
+    right_where are raw SQL and cannot be statically checked; runtime errors
+    in them are caught by the runner and reported as [SKIPPED] too."""
+    try:
+        req = _requirements(det)
+    except (KeyError, TypeError, ValueError) as e:
+        return [f"required param ({e})"]
+    existing = {r[0] for r in con.execute(
+        "SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
+    problems = []
+    for tbl in sorted(req):
+        if tbl not in existing:
+            problems.append(f"table/view '{tbl}'")
+            continue
+        have = {r[1] for r in con.execute(f'PRAGMA table_info("{tbl}")')}
+        missing = sorted(c for c in req[tbl] if c not in have)
+        if missing:
+            problems.append(f"column(s) {', '.join(missing)} in '{tbl}'")
+    return problems
+
+
+def _guard_sql(guard_cols):
+    """Agreement predicate for guard column pairs: TRIM + case-insensitive
+    equality; a NULL on either side passes (absence is not disagreement)."""
+    return " AND ".join(
+        f'(l."{a}" IS NULL OR r."{b}" IS NULL OR '
+        f'TRIM(LOWER(l."{a}")) = TRIM(LOWER(r."{b}")))'
+        for a, b in guard_cols)
+
+
 # ---------------- templates ----------------
 def t_contradiction(con, det, run_id):
     p = det["params"]
@@ -82,13 +190,37 @@ def t_contradiction(con, det, run_id):
     tol = p.get("tolerance", 0)
     join_on = p["join_on"]  # [[left_col, right_col], ...]
     on_sql = " AND ".join(f'l."{a}" = r."{b}"' for a, b in join_on)
+    where_extra = f'{p.get("left_where", "")} {p.get("right_where", "")}'
+    guards = p.get("guard_cols", [])
+    guard_ok = _guard_sql(guards)
+    base_from = f'FROM "{L["table"]}" l JOIN "{R["table"]}" r ON {on_sql}'
+    base_where = f'''
+    WHERE l."{L['value_col']}" IS NOT NULL AND r."{R['value_col']}" IS NOT NULL
+      AND ABS(l."{L['value_col']}" - r."{R['value_col']}") > ?
+      {where_extra}
+    '''
+    # blank != conflict: missing-vs-present pairs belong to the gap template.
+    (n_null,) = con.execute(f'''
+        SELECT COUNT(*) {base_from}
+        WHERE (l."{L['value_col']}" IS NULL) <> (r."{R['value_col']}" IS NULL)
+          {where_extra} {f"AND {guard_ok}" if guards else ""}
+        ''').fetchone()
+    print(f"  excluded {n_null} pairs where one side was NULL "
+          f"(missing-vs-present is a gap, not a contradiction)")
+    if guards:
+        (n_guard,) = con.execute(
+            f"SELECT COUNT(*) {base_from} {base_where} AND NOT ({guard_ok})",
+            (tol,)).fetchone()
+        gdesc = ", ".join(a if a == b else f"{a}/{b}" for a, b in guards)
+        print(f"  guard excluded {n_guard} id-matched rows where {gdesc} "
+              f"disagreed — possible id collisions")
     q = f'''
     SELECT l."{L['value_col']}", r."{R['value_col']}",
            l.source_group, l.native_id, r.source_group, r.native_id,
            {", ".join(f'l."{c}"' for c in p.get("label_cols", []))}
-    FROM "{L['table']}" l JOIN "{R['table']}" r ON {on_sql}
-    WHERE l."{L['value_col']}" IS NOT NULL AND r."{R['value_col']}" IS NOT NULL
-      AND ABS(l."{L['value_col']}" - r."{R['value_col']}") > ?
+    {base_from}
+    {base_where}
+    {f"AND {guard_ok}" if guards else ""}
     '''
     n = 0
     for row in con.execute(q, (tol,)):
@@ -112,6 +244,20 @@ def t_gap(con, det, run_id):
     L, R = p["left"], p["right"]
     join_on = p["join_on"]
     on_sql = " AND ".join(f'l."{a}" = r."{b}"' for a, b in join_on)
+    guards = p.get("guard_cols", [])
+    if guards:
+        # a counterpart only counts as present if the ID join AND the guard
+        # columns agree — an id collision must not mask a real gap. Count how
+        # many id-only matches the guards rejected so collisions are visible.
+        guard_ok = _guard_sql(guards)
+        (n_guard,) = con.execute(f'''
+            SELECT COUNT(*) FROM "{L["table"]}" l JOIN "{R["table"]}" r ON {on_sql}
+            WHERE NOT ({guard_ok}) {p.get("left_where", "")}
+            ''').fetchone()
+        gdesc = ", ".join(a if a == b else f"{a}/{b}" for a, b in guards)
+        print(f"  guard excluded {n_guard} id-matched rows where {gdesc} "
+              f"disagreed — possible id collisions")
+        on_sql = f"{on_sql} AND {guard_ok}"
     label_cols = ", ".join(f'l."{c}"' for c in p.get("label_cols", [])) or "NULL"
     score_col = f'l."{p["score_col"]}"' if p.get("score_col") else "NULL"
     q = f'''
@@ -140,6 +286,19 @@ def t_outlier(con, det, run_id):
     group_cols = p.get("group_cols", [])
     gsel = ", ".join(f'"{c}"' for c in group_cols) or "'all'"
     method = p.get("method", "top_n")
+    # grain visibility: aggregates SUM every input row per group, so a table
+    # with many rows per underlying filing inflates totals by that multiple.
+    (rows_in,) = con.execute(
+        f'SELECT COUNT(*) FROM "{p["table"]}" WHERE "{p["value_col"]}" IS NOT NULL'
+    ).fetchone()
+    (n_groups,) = con.execute(
+        f'SELECT COUNT(*) FROM (SELECT 1 FROM "{p["table"]}" '
+        f'WHERE "{p["value_col"]}" IS NOT NULL GROUP BY {gsel})'
+    ).fetchone()
+    ratio = f", {rows_in / n_groups:.1f} rows/group" if n_groups else ""
+    print(f"  grain: {rows_in} input rows across {n_groups} distinct groups{ratio}"
+          f" — if the table is finer-grained than one row per filing,"
+          f" aggregates are inflated by that multiple")
     if method == "top_n":
         q = f'''
         SELECT {gsel}, SUM("{p['value_col']}") AS total, COUNT(*) AS n,
@@ -243,22 +402,45 @@ def main():
     con.executescript(LEADS_DDL)
 
     t0 = time.time()
+    # pre-flight EVERY selected detector before running ANY: a pack authored
+    # against a different corpus must degrade to skips, never a mid-run crash.
+    skipped = []
+    runnable = []
     for det in cfg["detectors"]:
         if args.only and det["id"] != args.only:
             continue
         fn = TEMPLATES.get(det["template"])
         if fn is None:
-            print(f"SKIP {det['id']}: unknown template {det['template']}")
+            print(f"[SKIPPED] detector {det['id']}: missing template "
+                  f"'{det['template']}'")
+            skipped.append(det["id"])
             continue
+        problems = preflight(con, det)
+        if problems:
+            print(f"[SKIPPED] detector {det['id']}: missing {'; '.join(problems)}")
+            skipped.append(det["id"])
+            continue
+        runnable.append((det, fn))
+
+    for det, fn in runnable:
         # idempotency: clear this detector's leads from this run id before re-emit
         con.execute("DELETE FROM leads WHERE detector_id=? AND created_run=?",
                     (det["id"], args.run_id))
-        n = fn(con, det, args.run_id)
+        try:
+            n = fn(con, det, args.run_id)
+        except Exception as e:
+            con.rollback()  # keep the previous run's leads for this detector
+            print(f"[SKIPPED] detector {det['id']}: runtime error ({e})")
+            skipped.append(det["id"])
+            continue
         con.commit()
         print(f"{det['id']} ({det['template']}): {n} leads ({time.time()-t0:.0f}s)")
 
     (total,) = con.execute("SELECT COUNT(*) FROM leads").fetchone()
     print(f"total leads in table: {total}")
+    if skipped:
+        print(f"{len(skipped)} detectors skipped — pack incomplete")
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

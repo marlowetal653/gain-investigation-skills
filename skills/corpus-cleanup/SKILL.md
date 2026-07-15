@@ -69,10 +69,18 @@ Read `PROFILE_REPORT.md` — **only** the report, never the raw data. From it:
      composite-key splits, and indexes).
    - `entities.json` — entity-resolution config: which table/columns are entity names,
      their types, intermediary patterns. Example: `packs/example/entities.json`.
-4. Record WHY in the mapping's `_comment` (which measured join facts drove the choice).
+4. Record WHY in the mapping's `_comment` (which measured join facts drove the choice)
+   — **and the grain of every table: what one row means.** Before ANY rate or count,
+   dedupe to that grain; a lobbyist listed once-per-issue inflated per-lobbyist counts
+   ~10x in testing.
 
 If a join is < ~95% contained, note the failure mode as data, not as something to paper
 over — imperfect joins become innocent explanations downstream.
+
+`post_sql` that fills a derived column must create the column first (`ALTER TABLE ...
+ADD COLUMN`) — filling a column that doesn't exist can fail silently, and one such
+failure blanked a field that downstream joins depended on. Step 5a must verify every
+derived column.
 
 ### Step 4 — Normalize + resolve entities (deterministic, full corpus)
 
@@ -86,7 +94,10 @@ Normalize drops and rebuilds `norm_*` tables each run; every row carries provena
 auto-merges only under strict guards (identical aggressive-norm, length ≥ 5, same
 declared type, not an intermediary composite like "X on behalf of Y"); everything fuzzy
 lands in `entity_merge_candidates` for review — false merges invent connections, so
-nothing fuzzy is ever merged automatically.
+nothing fuzzy is ever merged automatically. Case/punctuation-only variants are NOT
+fuzzy: "AKIN GUMP" vs "Akin Gump" is one entity, and leaving them split double-counts
+money — those auto-merge; only truly fuzzy pairs go to review. Work the review queue
+by mention count, highest first — high-volume entities move totals most.
 
 **Review loop:** sample pending candidates (highest score first), judge whether each
 pair is truly the same entity (an LLM or human sets `status='confirmed'` or
@@ -99,7 +110,10 @@ python3 scripts/resolve_entities.py --db spine.db --apply-confirmed
 
 Merges repoint aliases to the surviving entity and mark candidates `applied`.
 Never confirm a batch by score alone without eyeballing a random sample; common
-two-token person names ("John Rose") can collide across distinct people.
+two-token person names ("John Rose") can collide across distinct people. Person merges
+get a higher bar than org merges: never match people by last name alone — a lone
+"Porter" swept in a dozen unrelated people in testing. Require the full name AND an
+affiliated org to agree.
 
 Then checkpoint: `sqlite3 spine.db "PRAGMA wal_checkpoint(TRUNCATE);"`
 
@@ -107,7 +121,10 @@ Then checkpoint: `sqlite3 spine.db "PRAGMA wal_checkpoint(TRUNCATE);"`
 
 **(a) Deterministic:** counts reconcile (norm table rows vs raw_records per group),
 join rates match what the profile measured, and re-running step 4 reproduces the same
-counts (rebuild is deterministic).
+counts (rebuild is deterministic). Also check every `post_sql`-derived column is
+non-null at the expected rate — a silent post_sql failure looks like success until a
+downstream join hits the blank field. And compute any sanity rate at the table's
+recorded grain (dedupe first), not over raw rows.
 
 **(b) LLM spot-check:** pick ~10 random rows across the norm tables and round-trip each
 through:
@@ -119,6 +136,26 @@ python3 scripts/show_source.py --db spine.db --group <source_group> --id <native
 Confirm the normalized values genuinely appear in, and mean the same thing as, the raw
 record. A mapping that passes counts but garbles meaning fails here. If a spot-check
 fails, fix the mapping (step 3) and re-run step 4 — never patch norm tables by hand.
+
+### Step 6 — Offer the meaning index (optional, journalist's call)
+
+Once the spine passes sanity, **offer** to build the semantic index now, while the
+data work is fresh — don't wait for the journalist to need it mid-investigation.
+Explain it in plain language, roughly:
+
+> "One more optional step while I have everything loaded: I can build a *meaning
+> index* of your records. It lets me search by what records are ABOUT rather than
+> the exact words they use — find every record about late payments even when they
+> say 'delinquent remittance', compare documents by meaning, and take a known case
+> and find others like it. It's a one-time step per dataset: a small free download
+> (~90MB) and roughly [estimate from corpus size] of indexing. Every search after
+> that is instant. Want me to do it now?"
+
+If yes: the cross-reference skill's semantic layer section has the build command
+(`embed_index.py` + the pack's `semantic.json`, which you author from the profile —
+which text columns are worth indexing). If no, or if `sentence-transformers` isn't
+installed: note in `INVESTIGATION_PLAN.md` that the index is available later, and
+move on — nothing else depends on it.
 
 ## On a new corpus
 

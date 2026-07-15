@@ -1,9 +1,9 @@
 ---
-name: investigate
+name: dossier
 description: Export leads, entities, and evidence from the SQLite spine into an Obsidian vault — the journalist's working interface — and run targeted entity dossier investigations. Use after cross-reference has populated the leads table, when a human needs to browse, verify, or deep-dive findings, or when investigating a specific named entity.
 ---
 
-# investigate
+# dossier
 
 The journalist works **inside an Obsidian vault**, not in JSON dumps or chat
 transcripts. This skill renders the spine into linked markdown notes and supports

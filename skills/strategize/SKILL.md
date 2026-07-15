@@ -28,11 +28,18 @@ follow up on what they say rather than marching through a checklist:
    worded completely differently."
 3. **The data.** "What records do you have, and where did they come from? Any
    idea what one record looks like?" (Directory of files is enough — the
-   pipeline will profile it.)
-4. **Proof shape.** "If this story is true, what would the records show?
+   pipeline will profile it.) **Check the format now, kindly:** this engine
+   reads CSV/JSON/JSONL/XML. If their records are scanned PDFs, Word files, or
+   audio, say so plainly here — plan a text-extraction step or a different
+   corpus rather than failing at ingest. If they have NO data yet, walk them
+   through `WHAT-DATA.md` (bulk-download starter list) and pick one together.
+4. **Time window.** "Recent years only, or everything? Most stories live in the
+   last year or two; a scoped first run is much faster, and we can widen
+   later." Record the answer — the build phase filters ingest to it.
+5. **Proof shape.** "If this story is true, what would the records show?
    And what would convince you it's NOT true?" (This becomes the verification
    plan — an investigation that can't be disproven can't be proven either.)
-5. **Constraints.** Deadline? Publication venue and its legal bar? Anything
+6. **Constraints.** Deadline? Publication venue and its legal bar? Anything
    already published on this (novelty check)? Named individuals involved
    (defamation care rises)?
 
@@ -62,9 +69,9 @@ inventory (plain-language first, tool name in parentheses):
   seeded from Step 1's examples (**semantic layer**, optional install; requires
   the journalist's OK — one-time model download + indexing time).
 - Browse and verify leads as notes with sources attached; build dossiers on
-  specific people or companies (**investigate** → Obsidian vault).
+  specific people or companies (**dossier** → Obsidian vault).
 - Pull in outside public data to enrich or corroborate (the free-APIs
-  reference: `skills/investigate/references/free-apis.md`).
+  reference: `skills/dossier/references/free-apis.md`).
 - Check every sentence of a draft against the records before publication
   (**fact-check**).
 
@@ -86,6 +93,8 @@ At the project root. Sections:
 - **Questions** (the 2–4 investigable questions, ranked)
 - **Known-case seeds** (if any — verbatim text or references)
 - **Data map** (what corpus, where, rough size, what one record is)
+- **Time window** (the years the first run covers, from the interview; note
+  that the full sweep stays available as a follow-up)
 - **Tool plan per phase** (which skill/script answers which question, in what order)
 - **To build / to fetch** (the gap list with estimates)
 - **Verification plan** (what would confirm/refute each question; the

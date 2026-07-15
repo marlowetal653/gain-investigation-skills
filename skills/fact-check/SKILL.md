@@ -53,7 +53,7 @@ underlying texts, never the similarity score.
 ## Step 3 — External corroboration (only for NEEDS-EXTERNAL)
 
 1. Prefer authoritative public APIs from
-   `skills/investigate/references/free-apis.md` (legislative records, campaign
+   `skills/dossier/references/free-apis.md` (legislative records, campaign
    finance, official registers) over general web search.
 2. **Archive before you cite**: save every external URL to an archive service
    (e.g. web.archive.org/save) and record the archived URL alongside the live

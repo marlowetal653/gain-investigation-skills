@@ -1,10 +1,22 @@
 # Investigator
 
-An AI investigation assistant for journalists. Give it a folder of records —
-lobbying filings, court documents, grant awards, a FOIA production, any big pile of
-files — and work with it like a colleague: it plans the investigation with you, does
-the tedious digging, shows you everything it finds with the original document attached,
+Download a government database — lobbying, campaign finance, grants, contracts, court
+records — drop it in a folder, and this assistant finds the leads worth your time,
+with the original document stapled to every claim. It plans the investigation with
+you, does the tedious digging, attacks its own findings before showing you anything,
 and checks your story against the records before you publish.
+
+## What it works on — and what it doesn't (yet)
+
+**It shines on bulk structured data**: the files that come out of government portals
+and bulk-download pages — lobbying disclosures, campaign finance, grant and contract
+databases, court docket *exports*, inspection records, your city's checkbook site.
+If your records arrived as a spreadsheet, a database download, or a bulk export
+(CSV, JSON, JSONL, or XML files), you're in the right place.
+
+**It cannot yet read**: scanned documents or PDFs, handwriting, Word files, emails,
+audio, or photos. A stack of scanned FOIA PDFs needs a text-extraction step first —
+ask it and it will say so honestly rather than pretend.
 
 ---
 
@@ -12,6 +24,10 @@ and checks your story against the records before you publish.
 
 You don't need to be technical. You install it once (ask a colleague or follow the
 three lines below), then you just talk to it. Things you can say:
+
+**"What data should I even look at?"**
+See [WHAT-DATA.md](WHAT-DATA.md) — a starter list of government bulk-download sources
+(lobbying, campaign finance, spending, courts) that work out of the box.
 
 **"I just got this data dump. Where do I start?"**
 It interviews you — what's the story, what do you suspect, what would prove it — and
@@ -80,7 +96,7 @@ Now put your records in a folder and say what you want in your own words.
 | 1. Prepare | **corpus-cleanup** | Ingest verbatim → deterministic profile → LLM-authored field mapping (from the profile report, never raw data) → normalize → guarded entity resolution → two-sided sanity check. Output: `spine.db` (SQLite, WAL), every row carrying `source_group` + `native_id` + content hash |
 | 2. Scan | **cross-reference** | Config-driven detector templates (contradiction, gap, outlier, intermediary, overlap) + FTS5 exact-phrase mention bridge + optional semantic layer → `leads` table with provenance, innocent explanations, legal flags, defamation tiers |
 | 3. Verify | **cross-reference** | Validation ladder: cheap verifier per candidate, then parallel adversarial refuters with distinct lenses (extraction misread / innocent explanation / false merge / base rate). Kill reasons feed back into detector configs |
-| 4. Browse | **investigate** | Obsidian vault export (leads/sources/entities as wikilinked notes), entity dossiers, external enrichment via `references/free-apis.md` |
+| 4. Browse | **dossier** | Obsidian vault export (leads/sources/entities as wikilinked notes), entity dossiers, external enrichment via `references/free-apis.md` |
 | 5. Gate | **fact-check** | Claim extraction → spine-anchored verification (deterministic first) → external corroboration (archive-before-cite, credibility-weighted) → language/defamation/right-of-reply pass → claim-status table |
 
 ### Architecture: generic engine + per-corpus pack
@@ -134,7 +150,7 @@ python3 skills/corpus-cleanup/scripts/profile.py --db spine.db --out out/profile
 # author packs/<yourcorpus>/ from the profile report (see packs/example/)
 python3 skills/corpus-cleanup/scripts/normalize.py --db spine.db --mapping packs/<yourcorpus>/mapping.json
 python3 skills/cross-reference/scripts/detect.py   --db spine.db --config packs/<yourcorpus>/detectors.json
-python3 skills/investigate/scripts/export_obsidian.py --db spine.db --vault out/vault --top 25
+python3 skills/dossier/scripts/export_obsidian.py --db spine.db --vault out/vault --top 25
 ```
 
 ### Cross-session memory

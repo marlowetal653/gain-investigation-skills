@@ -20,53 +20,120 @@ ask it and it will say so honestly rather than pretend.
 
 ---
 
-## For journalists: what you can do with this
+## What you can do with this
 
-You don't need to be technical. You install it once (ask a colleague or follow the
-three lines below), then you just talk to it. Things you can say:
+You don't need to be technical — you install it once and talk to it in your own
+words. But you should know what it's actually capable of, because the answer is
+"more than a search box":
 
-**"What data should I even look at?"**
-See [WHAT-DATA.md](WHAT-DATA.md) — a starter list of government bulk-download sources
-(lobbying, campaign finance, spending, courts) that work out of the box.
+### Cross-check millions of records against each other — in seconds, not weeks
 
-**"I just got this data dump. Where do I start?"**
-It interviews you — what's the story, what do you suspect, what would prove it — and
-turns your hunch into a written investigation plan with concrete questions the records
-can actually answer. You approve the plan before anything runs.
+The classic investigative grind: two agencies publish overlapping data (two chambers'
+copies of the same disclosures; contracts vs. payments; permits vs. inspections) and
+somewhere in the overlap are the discrepancies worth chasing. Doing that by hand means
+weeks of spreadsheet hell; most newsrooms never try.
 
-**"Go through these records and find anything newsworthy."**
-It turns your files into one searchable database where every number, name, and date
-can be traced back to the original document, then scans for the classic shapes of a
-story: two sources that disagree about the same fact, records that should exist but
-don't, unusual extremes, hidden go-betweens, and money appearing near messaging.
+This tool does it as a database operation. Your records become one indexed database,
+and cross-checks run as queries — **the AI never reads a million records; it writes
+the query, the database does the sweep**. That's the design principle throughout:
+extraction and matching are done by fast, deterministic code; the AI's judgment is
+saved for interpreting results. Field-tested scale: a 1.1-million-record corpus (8.6GB
+of government XML and JSON) cross-checked chamber-against-chamber **in under a
+minute**, surfacing every same-quarter pair where the two copies disagree about money,
+where an expected counterpart filing simply doesn't exist, and where an ID points to
+two different companies (data-quality stories hide there too). Naive matching produces
+thousands of false alarms — amended-vs-original versions, rounding rules, snapshot
+timing — so the engine encodes those innocent explanations up front and filters them
+before you ever see a lead. In that field test, 12,000 raw anomalies collapsed to
+~3,700 honest candidates, and adversarial verification narrowed those to the handful
+worth a reporter's day.
 
-**"Is this actually a story, or is there an innocent explanation?"**
-Every lead it finds comes with the innocent explanations already listed, and before it
-shows you anything as promising, it attacks its own findings from several angles
-(wrong reading? lawful explanation? mistaken identity? just normal at this scale?).
-Leads that die get a recorded reason. You see what survived and why.
+### Turn badly structured data into something you can actually query
 
-**"Show me everything about this company / this person."**
-It builds a dossier: every record they appear in, who they're connected to, what
-money moved, with links back to sources — browsable as notes (in Obsidian, a free
-note-taking app) that you can read like a case file.
+Real government exports are a mess: 400,000 separate XML files with inconsistent
+casing, JSON with fields that appear and vanish, IDs that almost-but-don't-quite match
+across sources. The prep pipeline handles that without you writing a line of code:
 
-**"I remember a case like this from 2019 — find me more like it."**
-Give it a passage from a known, confirmed case and it finds records that talk about
-the same kind of thing *even in completely different words*. (This one needs a small
-one-time setup it will ask you about first — a free download and some indexing time.)
+1. **Ingest** — every record is loaded verbatim, fingerprinted (a cryptographic hash
+   proves it's never been altered), and tagged with where it came from.
+2. **Profile** — the engine measures the data: every field, how often it's filled,
+   what type it really is, and — crucially — which fields in one source actually match
+   which fields in another (computed exactly, over everything, because sampling lies).
+3. **Map** — the AI reads that profile (never your raw data) and writes the recipe
+   that turns chaos into clean tables: names standardized, dates parsed, composite IDs
+   split, name variants ("ACME LLC" / "Acme, L.L.C.") resolved to one entity with the
+   fuzzy cases held for human review.
 
-**"Fact-check my draft."**
-Before you publish, it checks every sentence against the records: which claims are
-supported by documents (with the document attached), which are partly supported,
-which have no support and must change. It flags causation words the records can't
-back, lists every named person still owed a right-of-reply call, and won't call the
-draft ready until that's clean.
+The result is one SQLite database file where "show me every payment over $100k to
+firms that also appear in the contracts data, by year" is a one-second query — and
+every row still points back to the exact source file and record it came from.
 
-**"Where were we?"**
-Close your laptop mid-investigation; next session, ask this and it picks up exactly
-where you left off — the plan and every lead's status are written down, not in its
-memory.
+### Search by meaning, not just keywords (and how that actually works)
+
+Keyword search can't find what it can't spell. Records about the same matter are
+written by different people in different vocabularies: one filing says *"capping
+out-of-pocket insulin costs"*, another says *"Medicare Part D benefit redesign"* —
+same fight, zero shared words.
+
+The optional meaning index fixes this, and the mechanism is simple to picture: the
+engine splits your records into small, manageable chunks (a few paragraphs each), and
+a small language model — downloaded once, running entirely on your machine, no data
+leaves your computer — converts each chunk into a list of numbers (a *vector*) that
+encodes what the text is *about*. Chunks about the same subject end up with similar
+numbers, regardless of wording. Searching means converting your question into the same
+kind of vector and finding the closest matches — across hundreds of thousands of
+chunks in a fraction of a second. Build it once per dataset (~90MB download plus
+roughly half an hour of indexing); every search after that is instant.
+
+What that unlocks:
+- **Ask in plain language**: "everything about delayed safety inspections" finds
+  records that say "postponed compliance reviews."
+- **Precedent search**: paste a passage from a known, confirmed case — it finds
+  records describing the same *kind* of scheme in completely different words.
+- **Meaning-level cross-referencing**: couple what officials say publicly with what
+  interests pay to influence, even when the two vocabularies never overlap. (Guarded:
+  it only pairs parties with a documented connection — otherwise "everyone talks about
+  insulin while everyone lobbies insulin" drowns you in coincidence.)
+- **Honest limits, disclosed**: a similarity score is never treated as evidence. Every
+  meaning-level lead shows you both original texts and requires old-fashioned
+  confirmation before it counts.
+
+### Hunt the shapes stories take
+
+Five detector types run over the clean database, each configured per dataset, each
+producing leads with the source records attached: **contradictions** (two sources,
+same fact, different values), **gaps** (the record that should exist and doesn't),
+**outliers** (extremes against the right baseline), **hidden go-betweens** ("X on
+behalf of Y" buried in a name field), and **timing couplings** (money and activity
+landing suspiciously together). Every lead ships with its innocent explanations listed
+first and survives an adversarial gauntlet — separate verification passes that try to
+kill it as a misread, a lawful pattern, a mistaken identity, or plain base-rate noise
+— before anyone calls it a finding. And a finding must pass one more test: *would this
+surprise anyone?* A company lobbying on rules that affect it is expected behavior, not
+news.
+
+### Prove every claim, to anyone, in seconds
+
+Everything above would be worthless if you couldn't defend it. Every claim the system
+makes carries a locator that resolves to the verbatim source record — one command
+prints the original, with a hash proving it's unaltered since ingest. The whole
+audit trail (every lead including the killed ones with their kill reasons, plus every
+cited source record) exports as a single small file an editor or lawyer can interrogate
+without installing anything else. Findings come out as clickable HTML, an Excel
+sheet, or a linked case-file (Obsidian vault) — your choice.
+
+### And the workflow around it
+
+- **"Where do I start?"** — it interviews you first, turns a hunch into concrete,
+  records-answerable questions, and writes the plan down before touching data. (No
+  data yet? [WHAT-DATA.md](WHAT-DATA.md) lists bulk sources that work out of the box.)
+- **"Show me everything about this company."** — entity dossiers with every record,
+  connection, and dollar, linked to sources.
+- **"Fact-check my draft."** — every sentence checked against the records before you
+  publish: supported (document attached), partial, or unsupported-and-must-change,
+  plus who's still owed a right-of-reply call.
+- **"Where were we?"** — the plan and every lead's status live in files, not the AI's
+  memory. Close the laptop; next session picks up exactly where you stopped.
 
 What it will NOT do: it never asserts intent or wrongdoing (it reports what records
 show), it never buries a limitation, and it asks before anything costly — downloads,

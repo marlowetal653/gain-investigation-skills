@@ -1,112 +1,149 @@
-# Investigator — an agentic records-investigation plugin
+# Investigator
 
-A Claude Code plugin for journalists: point it at a directory of records — lobbying
-filings, court documents, grant awards, FOIA productions, any JSONL/JSON/XML/CSV dump —
-and it plans the investigation with you, turns the files into one searchable
-source-traceable database, scans for anomalies, adversarially verifies what it finds,
-and hands you leads you can check back to the original documents. It talks to you in
-plain language; you don't need to be technical.
+An AI investigation assistant for journalists. Give it a folder of records —
+lobbying filings, court documents, grant awards, a FOIA production, any big pile of
+files — and work with it like a colleague: it plans the investigation with you, does
+the tedious digging, shows you everything it finds with the original document attached,
+and checks your story against the records before you publish.
 
-## Install & launch
+---
+
+## For journalists: what you can do with this
+
+You don't need to be technical. You install it once (ask a colleague or follow the
+three lines below), then you just talk to it. Things you can say:
+
+**"I just got this data dump. Where do I start?"**
+It interviews you — what's the story, what do you suspect, what would prove it — and
+turns your hunch into a written investigation plan with concrete questions the records
+can actually answer. You approve the plan before anything runs.
+
+**"Go through these records and find anything newsworthy."**
+It turns your files into one searchable database where every number, name, and date
+can be traced back to the original document, then scans for the classic shapes of a
+story: two sources that disagree about the same fact, records that should exist but
+don't, unusual extremes, hidden go-betweens, and money appearing near messaging.
+
+**"Is this actually a story, or is there an innocent explanation?"**
+Every lead it finds comes with the innocent explanations already listed, and before it
+shows you anything as promising, it attacks its own findings from several angles
+(wrong reading? lawful explanation? mistaken identity? just normal at this scale?).
+Leads that die get a recorded reason. You see what survived and why.
+
+**"Show me everything about this company / this person."**
+It builds a dossier: every record they appear in, who they're connected to, what
+money moved, with links back to sources — browsable as notes (in Obsidian, a free
+note-taking app) that you can read like a case file.
+
+**"I remember a case like this from 2019 — find me more like it."**
+Give it a passage from a known, confirmed case and it finds records that talk about
+the same kind of thing *even in completely different words*. (This one needs a small
+one-time setup it will ask you about first — a free download and some indexing time.)
+
+**"Fact-check my draft."**
+Before you publish, it checks every sentence against the records: which claims are
+supported by documents (with the document attached), which are partly supported,
+which have no support and must change. It flags causation words the records can't
+back, lists every named person still owed a right-of-reply call, and won't call the
+draft ready until that's clean.
+
+**"Where were we?"**
+Close your laptop mid-investigation; next session, ask this and it picks up exactly
+where you left off — the plan and every lead's status are written down, not in its
+memory.
+
+What it will NOT do: it never asserts intent or wrongdoing (it reports what records
+show), it never buries a limitation, and it asks before anything costly — downloads,
+long runs, or queries to outside services.
+
+### Install (three lines, once)
 
 ```
 git clone https://github.com/marlowetal653/gain-investigation-skills investigator
-# in a Claude Code session:
+```
+Then inside a Claude Code session:
+```
 /plugin marketplace add ./investigator
 /plugin install investigator
 ```
+Now put your records in a folder and say what you want in your own words.
 
-Then just describe what you want, in your own words:
+---
 
-> "I have a folder of city grant records. I think a few companies are getting
-> favored. Help me investigate."
+## For technical readers: how it works
 
-The `investigator` agent launches itself, interviews you about the story, writes an
-investigation plan, and walks you through every step — explaining what it's doing and
-why, asking before anything costly. `/investigate ./data` is a shortcut; you never
-need to memorize commands.
+### The lifecycle
 
-## The investigation lifecycle
-
-| Phase | Skill | What it does (plain language) |
+| Phase | Skill | What it does |
 |---|---|---|
-| 0. Plan | **strategize** | Interviews you, narrows a hunch into 2–4 questions records can answer, maps each to tools, writes `INVESTIGATION_PLAN.md` — the file every later session resumes from |
-| 1. Prepare | **corpus-cleanup** | Turns raw files into one searchable database (a SQLite "spine") where every value traces back to its original document |
-| 2. Scan | **cross-reference** | Config-driven detectors: contradictions between sources, missing counterpart records, extremes, hidden go-betweens, exact-name and meaning-level couplings |
-| 3. Verify | **cross-reference** (ladder) | Tries to KILL every promising lead — cheap checks, then independent adversarial agents with different attack angles. Only survivors advance |
-| 4. Browse | **investigate** | Exports leads to an Obsidian vault — notes with claims, evidence links, innocent explanations, right-of-reply checklists; builds dossiers on specific people/orgs |
-| 5. Publish gate | **fact-check** | Checks every sentence of a draft against the records; external corroboration via public APIs; defamation and right-of-reply pass. Nothing ships unsupported |
+| 0. Plan | **strategize** | Interview → 2–4 records-answerable questions → tool mapping + gap analysis → `INVESTIGATION_PLAN.md` |
+| 1. Prepare | **corpus-cleanup** | Ingest verbatim → deterministic profile → LLM-authored field mapping (from the profile report, never raw data) → normalize → guarded entity resolution → two-sided sanity check. Output: `spine.db` (SQLite, WAL), every row carrying `source_group` + `native_id` + content hash |
+| 2. Scan | **cross-reference** | Config-driven detector templates (contradiction, gap, outlier, intermediary, overlap) + FTS5 exact-phrase mention bridge + optional semantic layer → `leads` table with provenance, innocent explanations, legal flags, defamation tiers |
+| 3. Verify | **cross-reference** | Validation ladder: cheap verifier per candidate, then parallel adversarial refuters with distinct lenses (extraction misread / innocent explanation / false merge / base rate). Kill reasons feed back into detector configs |
+| 4. Browse | **investigate** | Obsidian vault export (leads/sources/entities as wikilinked notes), entity dossiers, external enrichment via `references/free-apis.md` |
+| 5. Gate | **fact-check** | Claim extraction → spine-anchored verification (deterministic first) → external corroboration (archive-before-cite, credibility-weighted) → language/defamation/right-of-reply pass → claim-status table |
 
-## Architecture: generic engine + per-corpus pack
+### Architecture: generic engine + per-corpus pack
 
-The engine scripts contain **zero knowledge of any specific dataset**. Everything
-corpus-specific lives in a "pack" of JSON configs the agent authors by reading a
-machine-generated profile report (never the raw data):
+Engine scripts (`skills/*/scripts/`, stdlib-only core) contain **zero corpus
+knowledge**. Everything corpus-specific lives in a pack of JSON configs the agent
+authors by reading a machine-generated profile report:
 
-- **Engine** (`skills/*/scripts/`): ingest, profile, normalize, resolve entities,
-  detect, embed, query, export — deterministic Python, stdlib-only core.
-- **Pack** (`packs/<yourcorpus>/`): `mapping.json` (raw fields → normalized tables),
-  `detectors.json` (what anomalies to scan for + their innocent explanations),
-  `entities.json` (which columns hold names), `semantic.json` (optional meaning-level
-  layer). Worked example with every knob documented: **`packs/example/`** — a
-  fictional city-grants corpus.
+- `mapping.json` — raw fields → normalized tables (dotted paths, array explode,
+  parent scope, type coercion, post-SQL hook)
+- `detectors.json` — detector parameters + innocent explanations (written before
+  looking at output)
+- `entities.json` — which columns hold entity names; guarded auto-merge rules
+- `semantic.json` — optional embedding spaces + anchored-bridge config
 
-On a new dataset only the pack is new thinking; every other step is the same command.
+Worked example with every knob documented: **`packs/example/`** (a fictional
+city-grants corpus). On a new dataset only the pack is new thinking.
 
-## Design principles
+### Design principles
 
-- **Provenance or it doesn't exist.** Every claim round-trips to a verbatim source
-  record (`show_source.py`). The vault, the reports, the fact-check table all carry
-  locators.
-- **Deterministic extraction.** SQL and scripts do the extraction and filtering; the
-  model's judgment is spent on planning, interpretation, and verification — not on
-  reading a million records.
-- **Adversarial verification.** Detector output is candidates, not findings. Leads
-  survive only by beating independent refuters (wrong-extraction / innocent-explanation
-  / false-merge / base-rate lenses). Kill reasons are recorded and fed back into
-  detector configs.
-- **Editorial doctrine baked in.** Records-show phrasing (no causation claims),
-  defamation tiers, right-of-reply checklists, legal flags as
-  leads-requiring-verification — never as accusations.
-- **Plain-language voice.** The agent explains why before how, sizes everything to the
-  journalist's goal, asks consent before costly steps (e.g. the semantic layer's
-  one-time model download + indexing), and translates every error into what-it-means
-  and what-happens-next.
+- **Provenance or it doesn't exist.** Every claim round-trips to a verbatim record
+  via `show_source.py`; locators travel with every lead, note, and fact-check row.
+- **Deterministic extraction.** SQL/scripts do extraction and filtering; model
+  judgment is reserved for planning, mapping authorship, interpretation, and
+  verification.
+- **Adversarial verification.** Detector output is candidates, never findings.
+- **Editorial doctrine.** Records-show phrasing, no causation claims, defamation
+  tiers, right-of-reply, legal flags as leads-requiring-verification.
+- **Consent + narration.** Plain-language explanation before each phase; explicit
+  consent before costly steps (model downloads, long indexing runs, external queries).
 
-## The semantic layer (optional)
+### The semantic layer (optional)
 
-Keyword search finds records that share words. The semantic layer finds records that
-share **meaning** — e.g. a query about a drug-price cap surfaces activities filed as
-"pharmaceutical pricing policy" with zero shared keywords. It also supports
-**precedent-seeded search**: give it passages from a known, confirmed case and it
-finds records that talk about the same kind of thing in different words.
+`sentence-transformers` + on-disk float16 vectors (no vector DB). `embed_index.py`
+builds spaces (deterministic 170-word chunker inside MiniLM's 256-token window);
+`semantic_query.py` retrieves by meaning, merges FTS ranks (`--hybrid`), and supports
+precedent-seeded search (`--seeds`); `semantic_bridge.py` couples text↔records by
+meaning but **only within anchored entity pairs** (documented relationships), with a
+boilerplate specificity filter and an empirical-null similarity floor — unanchored
+corpus-wide topic matching produces topical coincidence, not leads. Similarity scores
+are never the authority; matched verbatim texts and locators are. Vectors live in
+`semantic_index/` (never committed); scores reproduce to ~1e-3 across devices,
+model + revision + torch version + device recorded in `meta.json`.
 
-It requires one extra install (`pip install sentence-transformers`, a ~90MB model) and
-the agent always asks before building the index. Vectors live in `semantic_index/`
-(never committed). Similarity scores are never the authority — the matched verbatim
-texts and their locators are, and every semantic lead needs deterministic confirmation
-before promotion.
-
-## Cross-session memory
-
-Two files are the investigation's memory: `INVESTIGATION_PLAN.md` (goals, questions,
-tool plan) and the `leads` table in the spine (every candidate, its status —
-new/verified/promoted/killed — and why). A brand-new session reads both and picks up
-exactly where the last one stopped.
-
-## Quickstart without the agent (scripts run standalone)
+### Standalone usage (no agent)
 
 ```
-bash bootstrap.sh                    # environment check + full usage sequence
-python3 skills/corpus-cleanup/scripts/ingest.py  --db spine.db --root ./data
-python3 skills/corpus-cleanup/scripts/profile.py --db spine.db
+bash bootstrap.sh                    # env check + full usage sequence
+python3 skills/corpus-cleanup/scripts/ingest.py  --corpus ./data --db spine.db
+python3 skills/corpus-cleanup/scripts/profile.py --db spine.db --out out/profile
 # author packs/<yourcorpus>/ from the profile report (see packs/example/)
 python3 skills/corpus-cleanup/scripts/normalize.py --db spine.db --mapping packs/<yourcorpus>/mapping.json
 python3 skills/cross-reference/scripts/detect.py   --db spine.db --config packs/<yourcorpus>/detectors.json
 python3 skills/investigate/scripts/export_obsidian.py --db spine.db --vault out/vault --top 25
 ```
 
-## Credits
+### Cross-session memory
+
+`INVESTIGATION_PLAN.md` (goals, questions, tool plan) + the `leads` table (every
+candidate, status new/verified/promoted/killed, and why) are the investigation's
+durable state. A fresh session reads both and resumes.
+
+### Credits
 
 - Fact-check methodology adapted from **Joe Amditis**,
   [claude-skills-journalism](https://github.com/jamditis/claude-skills-journalism) (MIT).
@@ -114,6 +151,6 @@ python3 skills/investigate/scripts/export_obsidian.py --db spine.db --vault out/
   [ai-journalism-skills](https://huggingface.co/spaces/fdaudens/ai-journalism-skills) (CC BY 4.0).
 - Free-APIs reference adapted from Joe Amditis's free-apis-catalog (MIT).
 
-## License
+### License
 
 MIT.
